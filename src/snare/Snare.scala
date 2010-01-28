@@ -61,6 +61,8 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   protected val sharedPool = db getCollection POOL_COLLECTION + "_" + pool
   protected val instance = db getCollection uuid.toString
 
+  def authenticate(user:String,pswd:String) = db.authenticate(user,pswd.toCharArray)
+
   protected val ID = new BasicDBObject
   ID.put("_id", uuid.toString)
   protected val createdAt = System.currentTimeMillis
