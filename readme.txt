@@ -1,1 +1,1 @@
-Hello
+A coordination layer for distributed applications written in Scala using MongoDB
