@@ -4,6 +4,8 @@ import logger.LoggerFactory
 import scala.concurrent.ops.spawn
 import com.mongodb.{BasicDBObject, Mongo}
 import snare.tools.UUIDIdentitity._
+import java.util.UUID
+import snare.tools.Implicits._
 
 /**
  * The Snare main class
@@ -20,7 +22,7 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   val HEARTBEAT_COLLECTION = "heartbeat"
   val POOL_COLLECTION = "pool"
   var HEARTBEAT_INTERVAL = 3000
-  var EVENT_LOOP_INTERVAL = 3000
+  var EVENT_LOOP_INTERVAL = 6000
   val uuid = uniqueUUID(name)
   protected val ucnd = new BasicDBObject;
   ucnd.put("_id", uuid.toString)
@@ -28,52 +30,26 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   //
   // Basic heartbeat control of the heartbeat
   //
-  // TODO Should the heartbeat and event loop be merged?
-  protected var activityHeartbeat = false
+  private var activityFlag = false
 
-  def heartbeat = activityHeartbeat
+  def activity = activityFlag
 
-  def heartbeat_=(stat: Boolean) = stat match {
-  // Need to get started
-    case true if !activityHeartbeat => {
-      activityHeartbeat = true; runHeartbeat; true
-      // TODO: Update heartbeat status on the pool collection
-    }
-    // Already running
-    case true if activityHeartbeat => true
-    // Already not running
-    case false if !activityHeartbeat => false
-    // Need to update activity to stop
-    case false if activityHeartbeat => {
-      activityHeartbeat = false; false
-      // TODO: Update heartbeat status on the pool collection
-    }
-  }
-
-
-  //
-  // Basic notification event loop
-  //
-  // TODO Should the heartbeat and event loop be merged?
-  protected var activityEventLoop = false
-
-  def notifications = activityEventLoop
-
-  def notifications_=(stat: Boolean) = stat match {
+  def activity_=(stat: Boolean) = {
+    stat match {
     // Need to get started
-    case true if !activityEventLoop => {
-      activityEventLoop = true; runEventLoop; true
-      // TODO: Update event loop status on the pool collection
+      case true if !this.activityFlag => {
+        this.activityFlag = true
+        spawnActivity
+      }
+      // Already running
+      case true if this.activityFlag =>
+      // Already not running
+      case false if !this.activityFlag =>
+      // Need to update activity to stop
+      case false if this.activityFlag =>
+        this.activityFlag = false
     }
-    // Already running
-    case true if activityEventLoop => true
-    // Already not running
-    case false if !activityEventLoop => false
-    // Need to update activity to stop
-    case false if activityEventLoop => {
-      activityEventLoop = false; false
-      // TODO: Update event loop status on the pool collection
-    }
+    this.activityFlag
   }
 
   //
@@ -81,7 +57,7 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   //
   protected val m = new Mongo
   protected val db = m getDB DEFAULT_DB
-  protected val activity = db getCollection HEARTBEAT_COLLECTION
+  protected val heartbeat = db getCollection HEARTBEAT_COLLECTION+ "_" + pool
   protected val sharedPool = db getCollection POOL_COLLECTION + "_" + pool
   protected val instance = db getCollection uuid.toString
 
@@ -93,7 +69,6 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   private val sdh = new SnareShutdownHook(this)
 
   protected def registerToPool = {
-    // TODO This is tight to the heartbeat. What about the event loop?
     val nc = networkConfiguration
     nc.put("ts", System.currentTimeMillis)
     val entry = new BasicDBObject
@@ -105,10 +80,9 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
     this
   }
 
-  protected[snare] def unregisterFromPool = {
-   // TODO This is tight to the heartbeat. What about the event loop?
+  protected def unregisterFromPool = {
    try {
-      activity.remove(ID)
+      heartbeat.remove(ID)
       sharedPool.remove(ID)
       instance.drop
     }
@@ -124,52 +98,78 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   //
   // The thread that runs the heart beat
   //
-  protected def runHeartbeat = {
+  protected def spawnActivity = {
     //
     // The heart beat
     //
     spawn {
-      registerToPool
-      log info "[HRTB] Heartbeat engaged for "+uuid
-      while (activityHeartbeat) {
-        Thread.sleep(HEARTBEAT_INTERVAL)
-        val update = new BasicDBObject
-        val value = new BasicDBObject
-        value.put("ts", System.currentTimeMillis)
-        update.put("$set", value)
-        try {
-          // Activity update
-          activity.update(ucnd, update, true, false)
-          log finest "[SUCC] " + uuid + " " + update
-        }
-        catch {
-          case e => log warning "[FAIL] " + uuid + " " + e.getCause
+      try {
+        registerToPool
+        log info "[HRTB] Heartbeat engaged for " + uuid
+        while (activityFlag) {
+          try {
+            Thread.sleep(HEARTBEAT_INTERVAL)
+            val update = new BasicDBObject
+            val value = new BasicDBObject
+            value.put("ts", System.currentTimeMillis)
+            update.put("$set", value)
+
+            // Activity update
+            heartbeat.update(ucnd, update, true, false)
+            //log finest "[HRTB] Heartbeat for " + uuid + " " + update
+          }
+          catch {
+            case e => log warning "[FAIL] Heartbeat on " + uuid + " " + e.getCause
+          }
         }
       }
-      log info "[HRTB] Heartbeat disengaged for "+uuid
-      unregisterFromPool
+      catch {
+        case e => {
+          log warning "[FAIL] Heartbeat failed to register " + uuid + " " + e.getCause
+          activityFlag = false
+        }
+      }
+      try {
+        unregisterFromPool
+        log info "[HRTB] Heartbeat disengaged for " + uuid
+      }
+      catch {
+        case e => {
+          log warning "[FAIL] Heartbeat failed to unregister " + uuid + " " + e.getCause
+          activityFlag = false
+        }
+      }
+      this
     }
-  }
-
-  def runEventLoop = {
     //
     // The notification threat
     //
     spawn {
-      log info "[EVTL] Eveent loop engaged for " + uuid
-      while (activityEventLoop) {
-        val cur = instance.find
-        while (cur.hasNext) {
+      log info "[EVTL] Notification event loop engaged for " + uuid
+      while (activityFlag) {
+        try {
           Thread.sleep(EVENT_LOOP_INTERVAL)
-          val msg = cur.next.asInstanceOf[BasicDBObject]
-          if ( notify(msg) )
-            log info "[EVTL] Notification processed by "+uuid+" "+msg
-          else
-            log info "[EVTL] Notification ignored by "+uuid+" "+msg
-          instance.remove(msg)
+          val cur = instance.find
+          // log finest "[EVTL] Notifications available " + cur.hasNext
+          while (cur.hasNext) {
+            try {
+              val msg = cur.next.asInstanceOf[BasicDBObject]
+              if (notify(msg))
+                log info "[EVTL] Notification processed by " + uuid + " " + msg
+              else
+                log info "[EVTL] Notification ignored by " + uuid + " " + msg
+              instance.remove(msg)
+            }
+            catch {
+              case e => log warning "[EVTL] Exeception while processing notification on " + uuid + " " + e.toString
+            }
+          }
+        }
+        catch {
+          case e => log warning "[EVTL] Exception on notification event loop on " + uuid + " " + e.toString
         }
       }
-      log info "[EVTL] Eveent loop disengaged for " + uuid
+      log info "[EVTL] Notification event loop disengaged for " + uuid
     }
   }
 
@@ -215,6 +215,19 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
       None
   }
 
+  override def toString = "<Snare: "+name+", "+pool+", "+host+", "+port+", activity="+activityFlag+">"
+
+  private class SnareShutdownHook(snare: Snare) extends Thread {
+    val log = LoggerFactory.getLogger
+
+    override def run() {
+      log severe "Abnormal finalization. Cleaning after " + snare.uuid + ":" + snare.name
+      snare.unregisterFromPool
+      log severe "Broadcasting abnormal termination of " + snare.uuid + ":" + snare.name
+      snare.broadcast("""{"msg":"killed","type":"fatal","uuid":""" +
+              '"' + snare.uuid + '"' + ""","ts":""" + System.currentTimeMillis + "}")
+    }
+  }
 }
 
 /**
@@ -225,6 +238,9 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
  *
  */
 object Snare {
+
+  val version = "0.1vcli"
+  
   def apply(name: String, pool: String, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, "localhost", 27017, notify)
 
   def apply(name: String, pool: String, port: Int, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, "localhost", port, notify)
@@ -233,5 +249,5 @@ object Snare {
 
   def apply(name: String, pool: String, host: String, port: Int, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, host, port, notify)
 
-  def unapply(s: Snare): Option[(String, String, String, Int)] = Some((s.name, s.pool, s.host, s.port))
+  def unapply(s: Snare): Option[(UUID,String, String, String, Int, Boolean)] = Some((s.uuid, s.name, s.pool, s.host, s.port, s.activityFlag))
 }
