@@ -241,7 +241,7 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
  */
 object Snare {
 
-  val version = "0.1vcli"
+  val version = "0.2vcli"
   
   def apply(name: String, pool: String, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, "localhost", 27017, notify)
 
