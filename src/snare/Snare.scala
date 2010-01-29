@@ -76,7 +76,9 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
     val entry = new BasicDBObject
     entry.put("_id",uuid.toString)
     entry.put("ts",createdAt)
-    entry.put("network",nc)
+    entry.put("name",name)
+    entry.put("pool",pool)
+    entry.put("interfaces",nc)
     sharedPool.update(ID, entry, true, false)
     Runtime.getRuntime.addShutdownHook(sdh)
     this
@@ -215,6 +217,24 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
     }
     else
       None
+  }
+
+  def fetchPeerInformation (uuid: String) = {
+      val peer = new BasicDBObject
+      peer.put("_id", uuid)
+      if (sharedPool.find(peer).count == 1)
+        Some(sharedPool.findOne(peer))
+      else
+        None
+  }
+
+  def fetchRegisteredPeersInformation = {
+    var res: List[BasicDBObject] = Nil
+    val peer = new BasicDBObject
+    peer.put("_id", uuid.toString)
+    val cur = sharedPool.find()
+    while (cur.hasNext) res ::= cur.next.asInstanceOf[BasicDBObject]
+    res
   }
 
   override def toString = "<Snare: "+name+", "+pool+", "+host+", "+port+", activity="+activityFlag+">"
