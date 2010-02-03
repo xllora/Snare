@@ -120,19 +120,24 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
           while (cur.hasNext) {
             try {
               val msg = cur.next.asInstanceOf[BasicDBObject]
-              if (notify(msg))
-                log info "[EVTL] Notification processed by " + uuid + " " + msg
-              else
-                log info "[EVTL] Notification ignored by " + uuid + " " + msg
+              try {
+                if (notify(msg))
+                  log info "[EVTL] Notification processed by " + uuid + " " + msg
+                else
+                  log info "[EVTL] Notification ignored by " + uuid + " " + msg
+              }
+              catch {
+                case e => log warning "[EVTL] Exeception while processing notification on " + uuid + " " + e.toString
+              }
               storage.instance.remove(msg)
             }
             catch {
-              case e => log warning "[EVTL] Exeception while processing notification on " + uuid + " " + e.toString
+              case e => log warning "[EVTL] Exeception while removing processed notification on " + uuid + " " + e.toString
             }
           }
         }
         catch {
-          case e => log warning "[EVTL] Exception on notification event loop on " + uuid + " " + e.toString
+          case e => log warning "[EVTL] Exception while pulling notifications in event loop on " + uuid + " " + e.toString
         }
       }
       log info "[EVTL] Notification event loop disengaged for " + uuid
@@ -142,6 +147,8 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
   //
   // Returns the peers in the pool
   //
+  def heartbeats = storage.queryHeartbeats
+
   def peers = storage.queryPeers
 
   def broadcast(message: BasicDBObject) = storage.queryBroadcast(message)

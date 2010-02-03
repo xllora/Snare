@@ -98,17 +98,17 @@ extends QueryTools (pool,host,port,log) {
   }
 
   // Notify the peer
-  def queryNotifyPeer(uuid:String,message: BasicDBObject) = {
+  def queryNotifyPeer(peerUUID:String,message: BasicDBObject) = {
     try {
       val peer = new BasicDBObject
-      peer.put("_id", uuid)
+      peer.put("_id", peerUUID)
       if (sharedPool.find(peer).count == 1) {
         val msg = new BasicDBObject
         msg.put("ts", System.currentTimeMillis)
         msg.put("msg", message)
         msg.put("source", uuid.toString)
         msg.put("type", "DIRECT")
-        db.getCollection(uuid).insert(msg)
+        db.getCollection(peerUUID).insert(msg)
         Some(uuid)
       }
       else
