@@ -14,19 +14,21 @@ import java.util.logging._
 
 object LoggerFactory {
   protected val LOGGER = "snare.logger.LoggerFactory"
-  protected val log = Logger.getLogger(LOGGER)
+  protected var logger = Logger.getLogger(LOGGER)
   protected val frmt = new SnareFormatter
-  if (log.getHandlers.length > 0)
-    for (hdl <- log.getHandlers)
+  if (logger.getHandlers.length > 0)
+    for (hdl <- logger.getHandlers)
       hdl setFormatter frmt 
-  val parent = log.getParent
+  val parent = logger.getParent
   if (parent != null)
     for (hdl <- parent.getHandlers)
       hdl setFormatter frmt
 
-  def setHandler(hdl:Handler) = log.addHandler(hdl) ; log
+  def addHandler(hdl:Handler) = logger.addHandler(hdl) ; logger
 
-  def getLogger = Logger.getLogger(LOGGER)
+  def log = logger
+
+  def log_= (l:Logger) = logger = l
 
   class SnareFormatter extends Formatter {
     val MAX_THREAD_NAME_LENGTH = 40

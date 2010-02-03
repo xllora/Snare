@@ -6,6 +6,7 @@ import com.mongodb.{BasicDBObject, Mongo}
 import snare.tools.UUIDIdentitity._
 import java.util.UUID
 import snare.tools.Implicits._
+import snare.storage.QueryTools._
 
 /**
  * The Snare main class
@@ -15,14 +16,13 @@ import snare.tools.Implicits._
  *
  */
 
-class Snare(val name: String, val pool: String, val host: String, val port: Int,
+class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
+            val host: String, val port: Int,
             notify: (BasicDBObject) => Boolean) {
-  val log = LoggerFactory.getLogger
+  protected val log = LoggerFactory.log
   val DEFAULT_DB = "Snare"
   val HEARTBEAT_COLLECTION = "heartbeat"
   val POOL_COLLECTION = "pool"
-  var HEARTBEAT_INTERVAL = 3000
-  var EVENT_LOOP_INTERVAL = 6000
   val uuid = uniqueUUID(name)
   protected val ucnd = new BasicDBObject;
   ucnd.put("_id", uuid.toString)
@@ -53,7 +53,7 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   }
 
   //
-  // Main heartbeat collection
+  // Main collections
   //
   protected val m = new Mongo
   protected val db = m getDB DEFAULT_DB
@@ -78,8 +78,10 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
     entry.put("ts",createdAt)
     entry.put("name",name)
     entry.put("pool",pool)
+    entry.put("metadata",metadata)
     entry.put("interfaces",nc)
     sharedPool.update(ID, entry, true, false)
+    updateHeartbeat(createdAt)
     Runtime.getRuntime.addShutdownHook(sdh)
     this
   }
@@ -99,6 +101,27 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
     this
   }
 
+  protected def updateHeartbeat = {
+    val update = new BasicDBObject
+    val value = new BasicDBObject
+    value.put("ts", System.currentTimeMillis)
+    update.put("$set", value)
+
+    // Activity update
+    heartbeat.update(ucnd, update, true, false)
+  }
+
+  protected def updateHeartbeat(createTS:Long) = {
+    val update = new BasicDBObject
+    val value = new BasicDBObject
+    value.put("createdAt",createTS)
+    value.put("ts", System.currentTimeMillis)
+    update.put("$set", value)
+
+    // Activity update
+    heartbeat.update(ucnd, update, true, false)
+  }
+
   //
   // The thread that runs the heart beat
   //
@@ -112,14 +135,8 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
         log info "[HRTB] Heartbeat engaged for " + uuid
         while (activityFlag) {
           try {
-            Thread.sleep(HEARTBEAT_INTERVAL)
-            val update = new BasicDBObject
-            val value = new BasicDBObject
-            value.put("ts", System.currentTimeMillis)
-            update.put("$set", value)
-
-            // Activity update
-            heartbeat.update(ucnd, update, true, false)
+            Thread.sleep(Snare.HEARTBEAT_INTERVAL)
+            updateHeartbeat
             //log finest "[HRTB] Heartbeat for " + uuid + " " + update
           }
           catch {
@@ -152,7 +169,7 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
       log info "[EVTL] Notification event loop engaged for " + uuid
       while (activityFlag) {
         try {
-          Thread.sleep(EVENT_LOOP_INTERVAL)
+          Thread.sleep(Snare.EVENT_LOOP_INTERVAL)
           val cur = instance.find
           // log finest "[EVTL] Notifications available " + cur.hasNext
           while (cur.hasNext) {
@@ -180,67 +197,20 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
   //
   // Returns the peers in the pool
   //
-  def peers = {
-    var res: List[String] = Nil
-    val cur = sharedPool.find
-    while (cur.hasNext) res ::= cur.next.get("_id").toString
-    res
-  }
+  def peers = queryPeers(sharedPool,host,port,pool,log)
 
-  def broadcast(message: BasicDBObject) = {
-    val cur = sharedPool.find
-    val msg = new BasicDBObject
-    msg.put("ts", System.currentTimeMillis)
-    msg.put("msg", message)
-    msg.put("source", uuid.toString)
-    msg.put("type","BROADCAST")
-    var peers: List[String] = Nil
-    while (cur.hasNext) {
-      val peer = cur.next.get("_id").toString
-      db.getCollection(peer).insert(msg)
-      peers ::= peer
-    }
-    peers
-  }
+  def broadcast(message: BasicDBObject) = queryBroadcast(message,sharedPool, db, uuid, host, port, pool, log)
 
-  def notifyPeer(uuid: String, message: BasicDBObject) = {
-    val peer = new BasicDBObject
-    peer.put("_id", uuid)
-    if (sharedPool.find(peer).count == 1) {
-      val msg = new BasicDBObject
-      msg.put("ts", System.currentTimeMillis)
-      msg.put("msg", message)
-      msg.put("source",uuid.toString)
-      msg.put("type","DIRECT")
-      db.getCollection(uuid).insert(msg)
-      Some(uuid)
-    }
-    else
-      None
-  }
+  def notifyPeer(uuid: String, message: BasicDBObject) = queryNotifyPeer(uuid, message, db, sharedPool, host, port, pool, log)
 
-  def fetchPeerInformation (uuid: String) = {
-      val peer = new BasicDBObject
-      peer.put("_id", uuid)
-      if (sharedPool.find(peer).count == 1)
-        Some(sharedPool.findOne(peer))
-      else
-        None
-  }
+  def fetchPeerInformation (uuid:String) = queryFetchPeerInformation(uuid, sharedPool, host, port, pool, log)
 
-  def fetchRegisteredPeersInformation = {
-    var res: List[BasicDBObject] = Nil
-    val peer = new BasicDBObject
-    peer.put("_id", uuid.toString)
-    val cur = sharedPool.find()
-    while (cur.hasNext) res ::= cur.next.asInstanceOf[BasicDBObject]
-    res
-  }
+  def fetchRegisteredPeersInformation =  queryFetchRegisteredPeersInformation(sharedPool,host,port,pool,log)
 
   override def toString = "<Snare: "+name+", "+pool+", "+host+", "+port+", activity="+activityFlag+">"
 
   private class SnareShutdownHook(snare: Snare) extends Thread {
-    val log = LoggerFactory.getLogger
+    val log = LoggerFactory.log
 
     override def run() {
       log severe "Abnormal finalization. Cleaning after " + snare.uuid + ":" + snare.name
@@ -261,15 +231,20 @@ class Snare(val name: String, val pool: String, val host: String, val port: Int,
  */
 object Snare {
 
-  val version = "0.3vcli"
-  
-  def apply(name: String, pool: String, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, "localhost", 27017, notify)
+  val version = "0.4vcli"
 
-  def apply(name: String, pool: String, port: Int, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, "localhost", port, notify)
+  var HEARTBEAT_INTERVAL = 3000
+  var EVENT_LOOP_INTERVAL = 6000
 
-  def apply(name: String, pool: String, host: String, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, host, 27017, notify)
+  def apply(name: String, pool: String, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, new BasicDBObject, "localhost", 27017, notify)
 
-  def apply(name: String, pool: String, host: String, port: Int, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, host, port, notify)
+  def apply(name: String, pool: String, metadata: BasicDBObject, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, metadata, "localhost", 27017, notify)
 
-  def unapply(s: Snare): Option[(UUID,String, String, String, Int, Boolean)] = Some((s.uuid, s.name, s.pool, s.host, s.port, s.activityFlag))
+  def apply(name: String, pool: String, metadata: BasicDBObject, port: Int, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, metadata, "localhost", port, notify)
+
+  def apply(name: String, pool: String, metadata: BasicDBObject, host: String, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, metadata, host, 27017, notify)
+
+  def apply(name: String, pool: String, metadata: BasicDBObject, host: String, port: Int, notify: (BasicDBObject) => Boolean) = new Snare(name, pool, metadata, host, port, notify)
+
+  def unapply(s: Snare): Option[(UUID, String, String, BasicDBObject, String, Int, Boolean)] = Some((s.uuid, s.name, s.pool, s.metadata, s.host, s.port, s.activityFlag))
 }
