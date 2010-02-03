@@ -1,8 +1,8 @@
 package snare.storage
 
 import java.util.logging.Logger
-import com.mongodb.{DB, DBCollection, BasicDBObject}
 import java.util.UUID
+import com.mongodb.{Mongo, DB, DBCollection, BasicDBObject}
 
 /**
  * Basic querying mechanics
@@ -12,11 +12,27 @@ import java.util.UUID
  * 
  */
 
-object QueryTools {
+class QueryTools ( pool: String, host: String, port: Int, log:Logger) {
 
+  val DEFAULT_DB = "Snare"
+  val HEARTBEAT_COLLECTION = "heartbeat"
+  val POOL_COLLECTION = "pool"
+
+  //
+  // Main heartbeat collection
+  //
+  protected val m = new Mongo
+  protected val db = m getDB DEFAULT_DB
+  protected val heartbeat = db getCollection HEARTBEAT_COLLECTION + "_" + pool
+  protected val sharedPool = db getCollection POOL_COLLECTION + "_" + pool
+
+  //
+  // Authentication
+  //
+  def authenticate(user:String,pswd:String) = db.authenticate(user,pswd.toCharArray)
 
   // Retrieve the heartbeats
-  def queryHeartbeats (heartbeat:DBCollection,host:String,port:Int,pool:String,log:Logger)  = {
+  def queryHeartbeats  = {
     try {
       var res:List[BasicDBObject] = Nil
       var cur = heartbeat.find
@@ -31,7 +47,7 @@ object QueryTools {
   }
 
   // Retrieve the peers information
-  def queryFetchRegisteredPeersInformation (sharedPool:DBCollection,host:String,port:Int,pool:String,log:Logger) = {
+  def queryFetchRegisteredPeersInformation = {
     try {
       var res: List[BasicDBObject] = Nil
       val cur = sharedPool.find
@@ -45,7 +61,7 @@ object QueryTools {
   }
 
   // Retrieve the query peers
-  def queryPeers (sharedPool:DBCollection,host:String,port:Int,pool:String,log:Logger) = {
+  def queryPeers = {
     try {
       var res: List[String] = Nil
       val cur = sharedPool.find
@@ -58,54 +74,8 @@ object QueryTools {
     }
   }
 
-  // Broadcast a message
-  def queryBroadcast(message: BasicDBObject, sharedPool: DBCollection, db:DB, uuid:UUID, host: String, port: Int, pool: String,log:Logger) = {
-    try {
-      val cur = sharedPool.find
-      val msg = new BasicDBObject
-      msg.put("ts", System.currentTimeMillis)
-      msg.put("msg", message)
-      msg.put("source", uuid.toString)
-      msg.put("type", "BROADCAST")
-      var peers: List[String] = Nil
-      while (cur.hasNext) {
-        val peer = cur.next.get("_id").toString
-        db.getCollection(peer).insert(msg)
-        peers ::= peer
-      }
-      Some(peers)
-    }
-    catch {
-      case e => log severe "[WebUI] Failed to connect with server " + host + " on port " + port + " for collection " + pool
-      None
-    }
-  }
-
-  // Notify the peer
-  def queryNotifyPeer(uuid: String, message: BasicDBObject,  db:DB, sharedPool: DBCollection, host: String, port: Int, pool: String, log:Logger) = {
-    try {
-      val peer = new BasicDBObject
-      peer.put("_id", uuid)
-      if (sharedPool.find(peer).count == 1) {
-        val msg = new BasicDBObject
-        msg.put("ts", System.currentTimeMillis)
-        msg.put("msg", message)
-        msg.put("source", uuid.toString)
-        msg.put("type", "DIRECT")
-        db.getCollection(uuid).insert(msg)
-        Some(uuid)
-      }
-      else
-        None
-    }
-    catch {
-      case e => log severe "[WebUI] Failed to connect with server " + host + " on port " + port + " for collection " + pool
-      None
-    }
-  }
-
   // Fetch peer information
-  def queryFetchPeerInformation(uuid: String, sharedPool: DBCollection, host: String, port: Int, pool: String,log:Logger) = {
+  def queryFetchPeerInformation(uuid: String) = {
     try {
       val peer = new BasicDBObject
       peer.put("_id", uuid)
@@ -120,4 +90,30 @@ object QueryTools {
     }
   }
 
+  def queryPendingNotifications (uuid:String) = {
+    try {
+      val peer = db getCollection uuid
+      Some(peer.find.count)
+    }
+    catch {
+      case e => log severe "[WebUI] Failed to connect with server " + host + " on port " + port + " for collection " + pool
+      None
+    }
+  }
+
 }
+
+/**
+ * Companion object for querying mechanics
+ *
+ * @author Xavier Llora
+ * @date Feb 2, 2010 at 10:59:33 PM
+ *
+ */
+
+object QueryTools {
+
+  def apply (pool: String, host: String, port: Int, log:Logger) = new QueryTools(pool,host,port,log) 
+
+}
+

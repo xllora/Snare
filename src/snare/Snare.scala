@@ -6,7 +6,7 @@ import com.mongodb.{BasicDBObject, Mongo}
 import snare.tools.UUIDIdentitity._
 import java.util.UUID
 import snare.tools.Implicits._
-import snare.storage.QueryTools._
+import snare.storage._
 
 /**
  * The Snare main class
@@ -19,13 +19,15 @@ import snare.storage.QueryTools._
 class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
             val host: String, val port: Int,
             notify: (BasicDBObject) => Boolean) {
+
+  protected val createdAt = System.currentTimeMillis
   protected val log = LoggerFactory.log
-  val DEFAULT_DB = "Snare"
-  val HEARTBEAT_COLLECTION = "heartbeat"
-  val POOL_COLLECTION = "pool"
   val uuid = uniqueUUID(name)
-  protected val ucnd = new BasicDBObject;
-  ucnd.put("_id", uuid.toString)
+
+  //
+  // Main store interface object
+  //
+  val storage = UpdateTools(uuid,name,pool,createdAt,host,port,log)
 
   //
   // Basic heartbeat control of the heartbeat
@@ -53,74 +55,15 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
   }
 
   //
-  // Main collections
+  // Authentication
   //
-  protected val m = new Mongo
-  protected val db = m getDB DEFAULT_DB
-  protected val heartbeat = db getCollection HEARTBEAT_COLLECTION+ "_" + pool
-  protected val sharedPool = db getCollection POOL_COLLECTION + "_" + pool
-  protected val instance = db getCollection uuid.toString
-
-  def authenticate(user:String,pswd:String) = db.authenticate(user,pswd.toCharArray)
+  def authenticate(user:String,pswd:String) = storage.authenticate(user,pswd)
 
   protected val ID = new BasicDBObject
   ID.put("_id", uuid.toString)
-  protected val createdAt = System.currentTimeMillis
 
   // The shutdown hook for this instance
   private val sdh = new SnareShutdownHook(this)
-
-  protected def registerToPool = {
-    val nc = networkConfiguration
-    nc.put("ts", System.currentTimeMillis)
-    val entry = new BasicDBObject
-    entry.put("_id",uuid.toString)
-    entry.put("ts",createdAt)
-    entry.put("name",name)
-    entry.put("pool",pool)
-    entry.put("metadata",metadata)
-    entry.put("interfaces",nc)
-    sharedPool.update(ID, entry, true, false)
-    updateHeartbeat(createdAt)
-    Runtime.getRuntime.addShutdownHook(sdh)
-    this
-  }
-
-  protected def unregisterFromPool = {
-   try {
-      heartbeat.remove(ID)
-      sharedPool.remove(ID)
-      instance.drop
-    }
-    catch {
-      case _ =>
-    }
-    finally {
-      Runtime.getRuntime.removeShutdownHook(sdh)
-    }
-    this
-  }
-
-  protected def updateHeartbeat = {
-    val update = new BasicDBObject
-    val value = new BasicDBObject
-    value.put("ts", System.currentTimeMillis)
-    update.put("$set", value)
-
-    // Activity update
-    heartbeat.update(ucnd, update, true, false)
-  }
-
-  protected def updateHeartbeat(createTS:Long) = {
-    val update = new BasicDBObject
-    val value = new BasicDBObject
-    value.put("createdAt",createTS)
-    value.put("ts", System.currentTimeMillis)
-    update.put("$set", value)
-
-    // Activity update
-    heartbeat.update(ucnd, update, true, false)
-  }
 
   //
   // The thread that runs the heart beat
@@ -131,12 +74,13 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
     //
     spawn {
       try {
-        registerToPool
+        storage.registerToPool(ID, metadata)
+        Runtime.getRuntime.addShutdownHook(sdh)
         log info "[HRTB] Heartbeat engaged for " + uuid
         while (activityFlag) {
           try {
             Thread.sleep(Snare.HEARTBEAT_INTERVAL)
-            updateHeartbeat
+            storage.updateHeartbeat
             //log finest "[HRTB] Heartbeat for " + uuid + " " + update
           }
           catch {
@@ -151,7 +95,8 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
         }
       }
       try {
-        unregisterFromPool
+        storage unregisterFromPool ID
+        Runtime.getRuntime.removeShutdownHook(sdh)
         log info "[HRTB] Heartbeat disengaged for " + uuid
       }
       catch {
@@ -170,7 +115,7 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
       while (activityFlag) {
         try {
           Thread.sleep(Snare.EVENT_LOOP_INTERVAL)
-          val cur = instance.find
+          val cur = storage.instance.find
           // log finest "[EVTL] Notifications available " + cur.hasNext
           while (cur.hasNext) {
             try {
@@ -179,7 +124,7 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
                 log info "[EVTL] Notification processed by " + uuid + " " + msg
               else
                 log info "[EVTL] Notification ignored by " + uuid + " " + msg
-              instance.remove(msg)
+              storage.instance.remove(msg)
             }
             catch {
               case e => log warning "[EVTL] Exeception while processing notification on " + uuid + " " + e.toString
@@ -197,15 +142,15 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
   //
   // Returns the peers in the pool
   //
-  def peers = queryPeers(sharedPool,host,port,pool,log)
+  def peers = storage.queryPeers
 
-  def broadcast(message: BasicDBObject) = queryBroadcast(message,sharedPool, db, uuid, host, port, pool, log)
+  def broadcast(message: BasicDBObject) = storage.queryBroadcast(message)
 
-  def notifyPeer(uuid: String, message: BasicDBObject) = queryNotifyPeer(uuid, message, db, sharedPool, host, port, pool, log)
+  def notifyPeer(uuid: String, message: BasicDBObject) = storage.queryNotifyPeer(uuid, message)
 
-  def fetchPeerInformation (uuid:String) = queryFetchPeerInformation(uuid, sharedPool, host, port, pool, log)
+  def fetchPeerInformation (uuid:String) = storage.queryFetchPeerInformation(uuid)
 
-  def fetchRegisteredPeersInformation =  queryFetchRegisteredPeersInformation(sharedPool,host,port,pool,log)
+  def fetchRegisteredPeersInformation =  storage.queryFetchRegisteredPeersInformation
 
   override def toString = "<Snare: "+name+", "+pool+", "+host+", "+port+", activity="+activityFlag+">"
 
@@ -214,7 +159,7 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
 
     override def run() {
       log severe "Abnormal finalization. Cleaning after " + snare.uuid + ":" + snare.name
-      snare.unregisterFromPool
+      storage unregisterFromPool ID
       log severe "Broadcasting abnormal termination of " + snare.uuid + ":" + snare.name
       snare.broadcast("""{"msg":"killed","type":"fatal","uuid":""" +
               '"' + snare.uuid + '"' + ""","ts":""" + System.currentTimeMillis + "}")
