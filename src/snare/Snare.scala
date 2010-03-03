@@ -183,7 +183,7 @@ class Snare(val name: String, val pool: String, val metadata:BasicDBObject,
  */
 object Snare {
 
-  val version = "0.4vcli"
+  val version = "0.4.1vcli"
 
   var HEARTBEAT_INTERVAL = 3000
   var EVENT_LOOP_INTERVAL = 6000

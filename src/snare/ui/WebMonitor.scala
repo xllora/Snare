@@ -16,7 +16,7 @@ import com.mongodb.{BasicDBList, BasicDBObject, Mongo}
  *
  */
 
-class WebMonitor(val pool: String, val host: String, val port: Int) extends Crochet {
+class WebMonitor(val prefix:String, val pool: String, val host: String, val port: Int) extends Crochet {
   protected val log = LoggerFactory.log
   val DEFAULT_DB = "Snare"
   val HEARTBEAT_COLLECTION = "heartbeat"
@@ -111,7 +111,7 @@ class WebMonitor(val pool: String, val host: String, val port: Int) extends Croc
     </head>
 
 
-  get("/snare/"+pool+"/heartbeat") {
+  get(prefix+"/snare/"+pool+"/heartbeat") {
     val    hb = storage.queryHeartbeats
     val   now = new DateTime
     var total = 0
@@ -135,7 +135,7 @@ class WebMonitor(val pool: String, val host: String, val port: Int) extends Croc
                 hb match {
                   case Some(h) if h.length>0 => h.map(
                                   o => { total+=1 ;
-                                     <tr><td><a href={"/snare/"+pool+"/"+(o getString "_id")}>{o getString "_id"}</a></td>
+                                     <tr><td><a href={prefix+"/snare/"+pool+"/"+(o getString "_id")}>{o getString "_id"}</a></td>
                                                                   <td class={if ((now.getMillis-o.getLong("ts"))>bound) "red" else if ((now.getMillis-o.getLong("ts"))<0) "orange" else "green"}>{now.getMillis-o.getLong("ts")}</td>
                                      <td>{fmtSmall print new DateTime(o.getLong("createdAt"))}</td></tr> })
                   case None => <tr><td class="red" colspan="3">Failed to connect to the server</td></tr>
@@ -150,7 +150,7 @@ class WebMonitor(val pool: String, val host: String, val port: Int) extends Croc
     }
   }
 
-  get("/snare/"+pool+"/info") {
+  get(prefix+"/snare/"+pool+"/info") {
     var total = 0
     val peersInfo = storage.queryFetchRegisteredPeersInformation
     if ( header("Accept").indexOf("application/json")>=0 ) {
@@ -173,7 +173,7 @@ class WebMonitor(val pool: String, val host: String, val port: Int) extends Croc
                   case Some(p) if p.length>0 => p.map (
                           o => { total+=1
                                <tr>
-                               <td><a href={"/snare/"+pool+"/"+(o getString "_id")}>{o getString "_id"}</a></td>
+                               <td><a href={prefix+"/snare/"+pool+"/"+(o getString "_id")}>{o getString "_id"}</a></td>
                                <td>{storage.queryPendingNotifications(o getString "_id").getOrElse("Unknown")}</td>
                                <td>{fmtSmall print new DateTime(o getLong "ts")}</td>
                                <td>{o getString "pool"}/{o getString "name"}</td>
@@ -192,7 +192,7 @@ class WebMonitor(val pool: String, val host: String, val port: Int) extends Croc
   }
 
   
-  get(("^/snare/"+pool+"""/([a-f0-9\-]+)$""").r) {
+  get(("^"+prefix+"/snare/"+pool+"""/([a-f0-9\-]+)$""").r) {
     val uuid = elements(0)
     val sinf = storage.queryFetchPeerInformation(uuid)
     if ( header("Accept").indexOf("application/json")>=0 ) {
@@ -241,13 +241,15 @@ class WebMonitor(val pool: String, val host: String, val port: Int) extends Croc
  *
  */
 object WebMonitor {
-  def apply(pool: String) = new WebMonitor(pool, "localhost", 27017)
+  def apply(pool: String) = new WebMonitor("", pool, "localhost", 27017)
 
-  def apply(pool: String, port: Int) = new WebMonitor(pool, "localhost", port)
+  def apply(prefix:String, pool: String) = new WebMonitor(prefix, pool, "localhost", 27017)
 
-  def apply(pool: String, host: String) = new WebMonitor(pool, host, 27017)
+  def apply(prefix:String, pool: String, port: Int) = new WebMonitor(prefix, pool, "localhost", port)
 
-  def apply(pool: String, host: String, port: Int) = new WebMonitor(pool, host, port)
+  def apply(prefix:String, pool: String, host: String) = new WebMonitor(prefix, pool, host, 27017)
 
-  def unapply(wm: WebMonitor): Option[(String, String, Int)] = Some((wm.pool, wm.host, wm.port))
+  def apply(prefix:String, pool: String, host: String, port: Int) = new WebMonitor(prefix, pool, host, port)
+
+  def unapply(wm: WebMonitor): Option[(String, String, String, Int)] = Some((wm.prefix, wm.pool, wm.host, wm.port))
 }
