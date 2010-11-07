@@ -9,6 +9,9 @@ class CrochetProject(info: ProjectInfo) extends DefaultProject(info) {
 	// Jetty
 	lazy val jetty = "org.mortbay.jetty" % "jetty" % "6.1.9"
 	
+	// Joda time
+	lazy val joda_time = "joda-time" % "joda-time" % "1.6.2"
+	
 	// MongoDB
 	lazy val mongodb = "mongodb" % "mongodb" % "2.3" from "http://cloud.github.com/downloads/mongodb/mongo-java-driver/mongo-2.3.jar"
 	
